@@ -1,7 +1,9 @@
 package de.nailik.navigationsafeargscrash
 
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Parcelable
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,7 +30,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import de.nailik.navigationsafeargscrash.Routes.NestedParamRouteSealedInterface
+import de.nailik.navigationsafeargscrash.SomeDataSealedInterface.SomeDataClassInner
 import de.nailik.navigationsafeargscrash.ui.theme.NavigationSafeArgsCrashTheme
+import kotlinx.parcelize.Parcelize
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -81,6 +86,19 @@ fun Home(navController: NavController) {
             )
         }) {
             Text(text = "NestedParamRoute")
+        }
+
+        Button(onClick = {
+            navController.navigate(
+                NestedParamRouteSealedInterface(
+                    SomeDataClassInner(
+                        textFieldValue.text
+                    )
+                )
+            )
+        }
+        ) {
+            Text(text = "NestedParamRouteSealedInterface")
         }
 
     }
@@ -140,6 +158,17 @@ fun NavGraph(modifier: Modifier) {
                 text = route.data.text,
             )
         }
+        composable<NestedParamRouteSealedInterface>(
+            typeMap = mapOf(
+                typeOf<SomeDataSealedInterface>() to serializableType<SomeDataSealedInterface>()
+            )
+        ) { navBackStackEntry ->
+            val route = navBackStackEntry.toRoute<NestedParamRouteSealedInterface>()
+            RouteContent(
+                navController = navController,
+                text = (route.data as SomeDataClassInner).text,
+            )
+        }
     }
 }
 
@@ -156,36 +185,63 @@ data class StandardRoute(
     val text: String,
 )
 
+@Parcelize
 @Serializable
 data class SomeDataClass(
     val text: String,
-)
+) : Parcelable
 
 @Serializable
 data class NestedParamRoute(
     val data: SomeDataClass,
 )
 
-inline fun <reified T : Any> serializableType(
+interface Route
+
+sealed interface Routes : Route {
+
+    @Serializable
+    data class NestedParamRouteSealedInterface(
+        val data: SomeDataSealedInterface,
+        val test: Boolean = true,
+    ) : Routes
+
+}
+
+@Parcelize
+@Serializable
+sealed interface SomeDataSealedInterface : Parcelable {
+
+    @Serializable
+    data class SomeDataClassInner(val text: String) : SomeDataSealedInterface
+
+}
+
+inline fun <reified T : Parcelable> serializableType(
     isNullableAllowed: Boolean = false,
     json: Json = Json,
 ) = object : NavType<T>(isNullableAllowed = isNullableAllowed) {
     override fun get(
         bundle: Bundle,
         key: String,
-    ) = parseValue(bundle.getString(key)!!)
+    ) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        bundle.getParcelable(key, T::class.java)!!
+    } else {
+        @Suppress("DEPRECATION")
+        bundle.getParcelable(key)!!
+    }
 
     override fun parseValue(value: String): T =
-        json.decodeFromString(Uri.decode(value).replace("%25", "%"))
+        json.decodeFromString(value)
 
     override fun serializeAsValue(value: T): String =
-        Uri.encode(json.encodeToString(value).replace("%", "%25"))
+        Uri.encode(json.encodeToString(value))
 
     override fun put(
         bundle: Bundle,
         key: String,
         value: T,
-    ) = bundle.putString(key, serializeAsValue(value))
+    ) = bundle.putParcelable(key, value)
 
     override val name: String = T::class.java.simpleName
 }
